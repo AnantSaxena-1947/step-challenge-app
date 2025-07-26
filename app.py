@@ -2,11 +2,44 @@ import streamlit as st
 import pandas as pd
 import datetime
 import altair as alt
+import base64
+import requests
 
 CSV_FILE = "step_data.csv"
-TEAM_GOAL = 500_000
+TEAM_GOAL = 2000000
 
-# Load data
+def push_to_github(file_path):
+    token = st.secrets["github"]["token"]
+    username = st.secrets["github"]["username"]
+    repo = st.secrets["github"]["repo"]
+    repo_path = st.secrets["github"]["path"]
+
+    with open(file_path, "rb") as f:
+        content = f.read()
+    content_b64 = base64.b64encode(content).decode()
+
+    url = f"https://api.github.com/repos/{username}/{repo}/contents/{repo_path}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+    response = requests.get(url, headers=headers)
+    sha = response.json()["sha"] if response.status_code == 200 else None
+
+    payload = {
+        "message": f"Update step data - {datetime.datetime.now().isoformat()}",
+        "content": content_b64,
+        "branch": "main"
+    }
+    if sha:
+        payload["sha"] = sha
+
+    put_response = requests.put(url, headers=headers, json=payload)
+    if put_response.status_code not in [200, 201]:
+        st.error("❌ Failed to push CSV to GitHub")
+        st.error(put_response.json())
+
 def load_data():
     try:
         df = pd.read_csv(CSV_FILE)
@@ -20,23 +53,19 @@ def load_data():
         df = pd.DataFrame(columns=["name", "start_date", "end_date", "steps"])
     return df
 
-# Save data
 def save_data(df):
     df.to_csv(CSV_FILE, index=False)
+    push_to_github(CSV_FILE)
 
-# Check for overlapping entries
 def date_ranges_overlap(start1, end1, start2, end2):
     return max(start1, start2) <= min(end1, end2)
 
-# Expand ranges into individual dates
 def explode_dates(row):
     return pd.date_range(row['start_date'], row['end_date'])
 
-# Constants
 ALLOWED_START_DATE = datetime.date(2025, 7, 1)
 ALLOWED_END_DATE = datetime.date(2025, 7, 31)
 
-# UI setup
 st.set_page_config(page_title="Team Step Challenge", layout="centered")
 st.title("🚶‍♂️ Team Step Challenge Tracker")
 st.markdown("Submit your steps for any date range in **July 2025**.")
@@ -47,7 +76,6 @@ pin = st.text_input("🔐 Enter 4-digit PIN:", type="password", max_chars=4)
 if pin != ACCESS_PIN:
     st.error("Access denied. Please enter the correct PIN to continue.")
     st.stop()
-
 
 df = load_data()
 name = st.text_input("Enter your name to login or register:")
@@ -77,19 +105,14 @@ if name:
                 if overlap_found:
                     st.error("❗ Overlapping entry detected. Choose a non-overlapping date range.")
                 else:
-                    new_entry = pd.DataFrame([[
-                        name,
-                        pd.Timestamp(start_date),
-                        pd.Timestamp(end_date),
-                        steps
-                    ]], columns=["name", "start_date", "end_date", "steps"])
+                    new_entry = pd.DataFrame([[name, pd.Timestamp(start_date), pd.Timestamp(end_date), steps]],
+                                             columns=["name", "start_date", "end_date", "steps"])
                     df = pd.concat([df, new_entry], ignore_index=True)
                     save_data(df)
                     st.success("✅ Steps submitted successfully!")
 
     df = load_data()
 
-    # Explode data
     exploded = []
     for _, row in df.iterrows():
         dates = explode_dates(row)
@@ -105,7 +128,6 @@ if name:
         exploded_df['week'] = exploded_df['date'].dt.isocalendar().week
         exploded_df['steps'] = exploded_df['steps'].round().astype(int)
 
-        # 📆 Selectable week filter
         st.subheader("📊 Weekly Leaderboard")
         weeks_available = sorted(exploded_df['week'].unique())
         selected_week = st.selectbox("Choose a week to view leaderboard:", weeks_available)
@@ -119,21 +141,20 @@ if name:
             top_user = week_leaderboard.iloc[0]
             st.success(f"🥇 Week {selected_week} Winner: **{top_user['name']}** with **{int(top_user['steps'])}** steps!")
 
-        # 🧾 User submission history
         st.subheader("🗂️ Your Step Entries")
         user_entries = df[df['name'].str.lower() == name.lower()].sort_values(by='start_date')
         st.dataframe(user_entries)
 
-        # 🏆 Monthly Leaderboard
+  
         st.subheader("🏆 Monthly Leaderboard (July 2025)")
         monthly_df = exploded_df.groupby('name')['steps'].sum().reset_index().sort_values(by='steps', ascending=False)
         st.bar_chart(monthly_df.set_index("name"))
 
-        # 🎯 Progress Tracker
+    
         total_steps = exploded_df['steps'].sum()
         st.metric("📈 Team Progress", f"{int(total_steps)} / {TEAM_GOAL} steps")
 
-        # 🌡️ Daily Step Heatmap
+      
         st.subheader("📅 Daily Steps Heatmap")
         daily_totals = exploded_df.groupby('date')['steps'].sum().reset_index()
         chart = alt.Chart(daily_totals).mark_bar().encode(
@@ -143,7 +164,7 @@ if name:
         ).properties(title='Daily Step Totals')
         st.altair_chart(chart, use_container_width=True)
 
-        # 🎉 Final winner on July 31
+    
         if datetime.date.today() == datetime.date(2025, 7, 31):
             winner = monthly_df.iloc[0]
             st.balloons()
