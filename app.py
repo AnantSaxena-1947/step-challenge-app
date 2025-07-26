@@ -147,8 +147,27 @@ if name:
 
   
         st.subheader("🏆 Monthly Leaderboard (July 2025)")
-        monthly_df = exploded_df.groupby('name')['steps'].sum().reset_index().sort_values(by='steps', ascending=False)
-        st.bar_chart(monthly_df.set_index("name"))
+
+        # Calculate total steps per user
+        monthly_df = (
+            exploded_df.groupby('name')['steps']
+            .sum()
+            .reset_index()
+            .sort_values(by='steps', ascending=False)
+        )
+
+        # Add ranking
+        monthly_df['Rank'] = range(1, len(monthly_df) + 1)
+
+        # Round steps for display
+        monthly_df['steps'] = monthly_df['steps'].round().astype(int)
+
+        # Reorder columns
+        monthly_df = monthly_df[['Rank', 'name', 'steps']]
+
+        # Show leaderboard as a table
+        st.dataframe(monthly_df.rename(columns={"name": "Name", "steps": "Total Steps"}), use_container_width=True)
+
 
     
         total_steps = exploded_df['steps'].sum()
